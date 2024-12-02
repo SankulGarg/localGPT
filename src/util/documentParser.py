@@ -26,7 +26,7 @@ from langchain.docstore.document import Document
 
 
 # Load environment variables
-source_directory = os.environ.get('SOURCE_DIRECTORY', 'source_documents')
+source_directory = 'source_documents'
 db_type = os.environ.get('DBTYPE', 'chroma')
 embeddings_model_name = os.environ.get('EMBEDDINGS_MODEL_NAME', 'all-MiniLM-L6-v2')
 chunk_size = 1024

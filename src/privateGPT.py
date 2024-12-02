@@ -1,5 +1,7 @@
 from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain.llms import Ollama
 import os
@@ -16,6 +18,7 @@ embeddings_model_name = pythonPropertyReader.get("EMBEDDINGS_MODEL_NAME")
 target_source_chunks = int(pythonPropertyReader.get('TARGET_SOURCE_CHUNKS'))
 source_directory = os.environ.get('SOURCE_DIRECTORY', 'source_documents')
 db = pythonPropertyReader.get("DB")
+
 def main():
     # Parse the command line arguments
     args = parse_arguments()
@@ -23,28 +26,30 @@ def main():
     embeddings = HuggingFaceEmbeddings(model_name=embeddings_model_name)
     vector_store_interface = vectorStoreFactory.get_vector_db(db, embeddings)
 
+    memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True, output_key='answer')
+
+    # The retriever should work with the embeddings and return the top-k documents relevant to the query
     retriever = vector_store_interface.db.as_retriever(search_kwargs={"k": target_source_chunks})
+    
     # activate/deactivate the streaming StdOut callback for LLMs
     callbacks = [] if args.mute_stream else [StreamingStdOutCallbackHandler()]
 
     llm = Ollama(model=model, callbacks=callbacks)
-
-    qa = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=retriever, return_source_documents= not args.hide_source)
+    qa = ConversationalRetrievalChain.from_llm(llm=llm, memory=memory, retriever=retriever, return_source_documents=True)
     
     # Interactive questions and answers 
-    
     def handle_query(query):
         if query == "/exit":
-            return
-    
+            return True  # Exit the loop
+
         elif query == "/clear":
             os.system("clear")
-    
+
         elif query == "/ingest":
             documents = documentParser.process_documents(vector_store_interface.get_stored_files())
             print(f"Loaded {len(documents)} documents.")
             ingestService.ingest(vector_store_interface, documents)
-    
+
         elif query.startswith("/ingest"):
             file_paths = query.split(" ")[1:]
             if not file_paths:
@@ -52,20 +57,26 @@ def main():
             else:
                 for file_path in file_paths:
                     documentParser.load_documents(file_path)
-    
+
         elif query.strip() != "":
-            # Get the answer from the chain
+            # Retrieve relevant documents based on the query and embeddings
+            retrieved_docs = retriever.get_relevant_documents(query)
+            
+
+            # Get the answer from the chain, including the context and retrieved documents
             start = time.time()
-            res = qa(query)
+            res = qa(query)  # Append the query and the context to the LLM
             end = time.time()
+            
             print(f"({end-start:.2f}s) Time taken")
-            # # Print the relevant sources used for the answer
-            # for document in docs:
     
+
     while True:
         query = input("\nEnter a query: ")
-        handle_query(query)
-        
+        exit_flag = handle_query(query)
+        if exit_flag:
+            break
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='privateGPT: Ask questions to your documents without an internet connection, '
